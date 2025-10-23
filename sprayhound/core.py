@@ -112,8 +112,12 @@ class SprayHound:
 
     def test_credentials(self):
         owned = []
+        tested_flags = [c.is_tested(self.threshold, self.unsafe)[0] for c in self.credentials]
+        testing_nb = sum(1 for flag in tested_flags if flag)
 
-        testing_nb = len([c.is_tested(self.threshold, self.unsafe) for c in self.credentials if c.is_tested(self.threshold, self.unsafe)[0]])
+        pso_users = [c for c in self.credentials if c.pso]
+        if pso_users:
+            self.log.success(self.log.colorize("{} users have Fine-Grained Password Policy (PSO)".format(len(pso_users)), self.log.GREEN))
 
         self.log.success(self.log.colorize("{} users will be tested".format(testing_nb), self.log.GREEN))
         self.log.success(self.log.colorize("{} users will not be tested".format(len(self.credentials) - testing_nb), self.log.YELLOW))
@@ -125,17 +129,18 @@ class SprayHound:
 
         for credential in self.credentials:
             ret = credential.is_valid(self.ldap, self.threshold, self.unsafe)
+            pso_info = " [PSO]" if credential.pso else ""
             if ret == ERROR_SUCCESS:
-                self.log.success("[  {}  ] {}".format(self.log.colorize("VALID", self.log.GREEN), self.log.highlight("{} : {}").format(credential.samaccountname, credential.password)))
+                self.log.success("[  {}  ] {}{}".format(self.log.colorize("VALID", self.log.GREEN), self.log.highlight("{} : {}").format(credential.samaccountname, credential.password), pso_info))
                 owned.append(credential.samaccountname)
             elif ret == ERROR_LDAP_SERVICE_UNAVAILABLE:
                 return ret
             elif ret == ERROR_THRESHOLD:
-                self.log.debug("[ {} ] {} : {} BadPwdCount: {}, PwdPol: {}".format(self.log.colorize("SKIPPED", self.log.BLUE), credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold))
+                self.log.debug("[ {} ] {} : {} BadPwdCount: {}, Threshold: {}{}".format(self.log.colorize("SKIPPED", self.log.BLUE), credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold, pso_info))
             elif ret == ERROR_LDAP_CREDENTIALS:
-                self.log.debug("[{}] {} : {} failed - BadPwdCount: {}, PwdPol: {}".format(self.log.colorize("NOT VALID", self.log.RED), credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold))
+                self.log.debug("[{}] {} : {} failed - BadPwdCount: {}, Threshold: {}{}".format(self.log.colorize("NOT VALID", self.log.RED), credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold, pso_info))
             else:
-                self.log.debug("{} : {} failed - BadPwdCount: {}, PwdPol: {} (Error {}: {})".format(credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold, ret[0], ret[1]))
+                self.log.debug("{} : {} failed - BadPwdCount: {}, Threshold: {}{} (Error {}: {})".format(credential.samaccountname, credential.password, credential.bad_password_count+1, credential.threshold, pso_info, ret[0], ret[1]))
 
 
         answer = "n"

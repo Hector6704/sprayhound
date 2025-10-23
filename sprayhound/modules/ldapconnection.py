@@ -39,7 +39,8 @@ class LdapConnection:
         self._conn = None
         self.server = None
         self.domain_threshold = 0
-        self.granular_threshold = {}  # keys are policy DNs
+        self.granular_threshold = {}
+        self.pso_policies = {}
         self.get_domain_dn()
 
     def get_domain(self):
@@ -127,8 +128,9 @@ class LdapConnection:
                 Credential(
                     samaccountname=entry['attributes']['sAMAccountName'],
                     bad_password_count=0 if 'badPwdCount' not in entry['attributes'] else int(entry['attributes']['badPwdCount']),
-                    threshold=self.domain_threshold if entry['dn'] not in self.granular_threshold else self.granular_threshold[entry['dn']],
-                    pso=True if 'msDS-ResultantPSO' in entry['attributes'] and isinstance(entry['attributes']['msDS-ResultantPSO'], str) and entry['attributes']['msDS-ResultantPSO'].upper().startswith('CN=') else False
+                    threshold=self._get_user_threshold(entry),
+                    pso=entry['attributes'].get('msDS-ResultantPSO', None),
+                    dn=entry['dn']
                 ) for entry in res if isinstance(entry, dict) and 'attributes' in entry and entry['attributes']['sAMAccountName'][-1] != '$'
             ]
 
@@ -155,26 +157,47 @@ class LdapConnection:
 
         return result
 
+    def _get_user_threshold(self, entry):
+        if 'msDS-ResultantPSO' in entry['attributes']:
+            pso_dn = entry['attributes']['msDS-ResultantPSO']
+            if isinstance(pso_dn, str) and pso_dn in self.pso_policies:
+                return self.pso_policies[pso_dn]
+        return self.domain_threshold
+
     def get_password_policy(self):
         default_policy_container = self.domain_dn
         granular_policy_container = 'CN=Password Settings Container,CN=System,{}'.format(self.domain_dn)
         granular_policy_filter = '(objectClass=msDS-PasswordSettings)'
         granular_policy_attribs = ['msDS-LockoutThreshold', 'msDS-PSOAppliesTo']
         try:
-            # Load domain-wide policy.
             self._conn.search(default_policy_container, '(objectClass=*)', search_scope=ldap3.BASE, attributes=[ldap3.ALL_ATTRIBUTES, ldap3.ALL_OPERATIONAL_ATTRIBUTES])
         except ldap3.core.exceptions.LDAPException as e:
             self.log.error("An LDAP error occurred while getting password policy")
             raise
         self.domain_threshold = int(self._conn.response[0]['attributes']['lockoutThreshold'])
 
-        #TODO: implement granular policy retrieval
-        #results = self._conn.search_s(granular_policy_container, ldap.SCOPE_ONELEVEL, granular_policy_filter, granular_policy_attribs)
-        #print(results)
-        #for policy in results:
-        #    if len(policy[1]['msDS-PSOAppliesTo']) > 0:
-        #        for dest in policy[1]['msDS-PSOAppliesTo']:
-        #            self.granular_threshold[dest.decode('utf-8')] = int(policy[1]['msDS-LockoutThreshold'][0])
+        # Retrieve Fine-Grained Password Policies (PSO)
+        try:
+            self._conn.search(
+                search_base=granular_policy_container,
+                search_filter=granular_policy_filter,
+                search_scope=ldap3.LEVEL,
+                attributes=granular_policy_attribs
+            )
+            
+            pso_count = 0
+            for entry in self._conn.response:
+                if 'attributes' in entry and 'msDS-LockoutThreshold' in entry['attributes']:
+                    pso_dn = entry['dn']
+                    pso_threshold = int(entry['attributes']['msDS-LockoutThreshold'])
+                    self.pso_policies[pso_dn] = pso_threshold
+                    pso_count += 1
+                    self.log.debug("Found PSO: {} with threshold: {}".format(pso_dn, pso_threshold))
+            
+            if pso_count > 0:
+                self.log.success("Retrieved {} Fine-Grained Password Policies (PSO)".format(pso_count))
+        except ldap3.core.exceptions.LDAPException as e:
+            self.log.debug("Could not retrieve Fine-Grained Password Policies (may not exist): {}".format(e))
 
         return ERROR_SUCCESS
 

@@ -1,5 +1,7 @@
 # SprayHound
 
+**This fork supports Fine Grained Password Policies. It will check if the Password Settings Object (PSO) for the accounts, and make sure they don't get locked by the PSO threshold. The original Sprayhound just skipped the user it it had a PSO.**
+
 [![PyPI version](https://d25lcipzij17d.cloudfront.net/badge.svg?id=py&type=6&v=0.0.4&x2=0)](https://pypi.org/project/sprayhound/) [![Twitter](https://img.shields.io/twitter/follow/hackanddo?label=HackAndDo&style=social)](https://twitter.com/intent/follow?screen_name=hackanddo)
 
 
